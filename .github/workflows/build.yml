@@ -29,7 +29,23 @@ jobs:
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="" \
+            ENABLE_HARDENED_RUNTIME=NO \
             build
+
+      # Without a Developer ID certificate, the app is ad-hoc signed ("-"). Re-sign it explicitly, inside-out,
+      # so that everything carries the same ad-hoc signature and the app keeps its entitlements.
+      - name: Ad-hoc sign
+        run: |
+          APP="build/Build/Products/Release/DeskPad.app"
+          if [ -d "$APP/Contents/Frameworks" ]; then
+            find "$APP/Contents/Frameworks" -depth \( -name "*.framework" -o -name "*.dylib" \) \
+              -exec codesign --force --sign - --timestamp=none {} \;
+          fi
+          codesign --force --sign - --timestamp=none \
+            --entitlements DeskPad/DeskPad.entitlements \
+            "$APP"
+          codesign --display --verbose=2 "$APP"
+          codesign --display --entitlements - "$APP"
 
       - name: Package
         run: |
