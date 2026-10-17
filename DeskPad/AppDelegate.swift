@@ -21,6 +21,7 @@ enum UserDefaultsKey {
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     var window: NSWindow!
     private var hotKeyRef: EventHotKeyRef?
+    private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_: Notification) {
         UserDefaults.standard.register(defaults: [
@@ -59,6 +60,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         NSApplication.shared.mainMenu = makeMainMenu()
         registerToggleCursorHotKey()
+        setUpStatusItem()
 
         store.dispatch(AppDelegateAction.didFinishLaunching)
 
@@ -247,6 +249,55 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             !defaults.bool(forKey: UserDefaultsKey.bringToFrontOnCursorEnter),
             forKey: UserDefaultsKey.bringToFrontOnCursorEnter
         )
+    }
+
+    // MARK: - Status item
+
+    /// A menu bar extra offering the most common options, without having to switch to DeskPad first.
+    private func setUpStatusItem() {
+        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "display", accessibilityDescription: "DeskPad")
+            button.toolTip = "DeskPad"
+        }
+
+        let menu = NSMenu()
+        let items: [(String, Selector)?] = [
+            ("Safe Area Mode", #selector(toggleSafeArea(_:))),
+            ("Select Safe Area…", #selector(selectSafeArea(_:))),
+            ("Enter Safe Area Insets…", #selector(configureSafeArea(_:))),
+            ("Select Safe Area on Launch", #selector(toggleSelectSafeAreaOnLaunch(_:))),
+            nil,
+            ("Keep on Top", #selector(toggleKeepOnTop(_:))),
+            ("Bring to Front When Cursor Enters Display", #selector(toggleBringToFrontOnCursorEnter(_:))),
+            ("Move Cursor to/from DeskPad Display (⌃⌥⌘D)", #selector(toggleCursorLocation(_:))),
+            nil,
+            ("Show DeskPad Window", #selector(showWindow(_:))),
+            ("Quit DeskPad", #selector(quit(_:))),
+        ]
+        for item in items {
+            guard let item = item else {
+                menu.addItem(.separator())
+                continue
+            }
+            let menuItem = NSMenuItem(title: item.0, action: item.1, keyEquivalent: "")
+            menuItem.target = self
+            menu.addItem(menuItem)
+        }
+        statusItem.menu = menu
+        self.statusItem = statusItem
+    }
+
+    @objc private func showWindow(_: NSMenuItem) {
+        NSApp.activate(ignoringOtherApps: true)
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func quit(_: NSMenuItem) {
+        NSApp.terminate(nil)
     }
 
     /// The Dock icon's menu also offers the safe area options, as the menu bar may be on the damaged part of the screen.
