@@ -40,7 +40,16 @@ enum SafeArea {
 
     /// The intact part of the given screen, in AppKit (bottom-left origin) coordinates.
     static func intactFrame(of screen: NSScreen) -> NSRect {
-        let frame = screen.frame
+        // Derive the frame from the current display bounds, as `NSScreen.frame` can lag behind
+        // right after the display arrangement changed.
+        let bounds = CGDisplayBounds(screen.displayID)
+        let primaryDisplayHeight = CGDisplayBounds(CGMainDisplayID()).height
+        let frame = bounds.isEmpty ? screen.frame : NSRect(
+            x: bounds.minX,
+            y: primaryDisplayHeight - bounds.maxY,
+            width: bounds.width,
+            height: bounds.height
+        )
         let insets = self.insets
         return NSRect(
             x: frame.minX + insets.left,
@@ -56,34 +65,45 @@ enum SafeArea {
         return CGSize(width: floor(frame.width), height: floor(frame.height))
     }
 
-    /// Makes the virtual display the main display (so it gets the menu bar, Dock and new windows) by
-    /// moving it to the origin and placing all other displays to its right. Only lasts while DeskPad runs.
-    static func makeMainDisplay(_ virtualDisplayID: CGDirectDisplayID) {
+    /// Switches the virtual display to `mode` and makes it the main display (so it gets the menu bar, Dock and
+    /// new windows) by moving it to the origin and placing all other displays to its right. Any mirroring is
+    /// turned off, as a physical screen mirroring the virtual display would show the DeskPad window within
+    /// itself. All of this happens in one configuration, which only lasts while DeskPad runs.
+    static func makeMainDisplay(_ virtualDisplayID: CGDirectDisplayID, mode: CGDisplayMode?) {
         var displayCount: UInt32 = 0
         CGGetOnlineDisplayList(0, nil, &displayCount)
         var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
         CGGetOnlineDisplayList(displayCount, &displayIDs, &displayCount)
-        let otherDisplayIDs = displayIDs.prefix(Int(displayCount)).filter {
-            $0 != virtualDisplayID && CGDisplayMirrorsDisplay($0) == kCGNullDirectDisplay
-        }
-        let otherBounds = otherDisplayIDs.map(CGDisplayBounds)
-        guard let minX = otherBounds.map(\.minX).min(), let minY = otherBounds.map(\.minY).min() else {
-            return
-        }
-        let virtualBounds = CGDisplayBounds(virtualDisplayID)
+        let otherDisplayIDs = displayIDs.prefix(Int(displayCount)).filter { $0 != virtualDisplayID }
+        // Displays that currently mirror another one have the same bounds as it, so they are placed separately.
+        let extendedDisplayIDs = otherDisplayIDs.filter { CGDisplayIsInMirrorSet($0) == 0 }
+        let mirroringDisplayIDs = otherDisplayIDs.filter { CGDisplayIsInMirrorSet($0) != 0 }
+        let extendedBounds = extendedDisplayIDs.map(CGDisplayBounds)
+        let minX = extendedBounds.map(\.minX).min() ?? 0
+        let minY = extendedBounds.map(\.minY).min() ?? 0
+        // Use the size the virtual display is about to have, not its current one.
+        let virtualWidth = mode.map { CGFloat($0.width) } ?? CGDisplayBounds(virtualDisplayID).width
 
         var config: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&config) == .success else {
             return
         }
+        for displayID in [virtualDisplayID] + otherDisplayIDs where CGDisplayIsInMirrorSet(displayID) != 0 {
+            CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
+        }
+        if let mode = mode {
+            CGConfigureDisplayWithDisplayMode(config, virtualDisplayID, mode, nil)
+        }
         CGConfigureDisplayOrigin(config, virtualDisplayID, 0, 0)
-        for (displayID, bounds) in zip(otherDisplayIDs, otherBounds) {
-            CGConfigureDisplayOrigin(
-                config,
-                displayID,
-                Int32(virtualBounds.width + bounds.minX - minX),
-                Int32(bounds.minY - minY)
-            )
+        var maxX = virtualWidth
+        for (displayID, bounds) in zip(extendedDisplayIDs, extendedBounds) {
+            let x = virtualWidth + bounds.minX - minX
+            CGConfigureDisplayOrigin(config, displayID, Int32(x), Int32(bounds.minY - minY))
+            maxX = max(maxX, x + bounds.width)
+        }
+        for displayID in mirroringDisplayIDs {
+            CGConfigureDisplayOrigin(config, displayID, Int32(maxX), 0)
+            maxX += CGDisplayBounds(displayID).width
         }
         CGCompleteDisplayConfiguration(config, .forAppOnly)
     }

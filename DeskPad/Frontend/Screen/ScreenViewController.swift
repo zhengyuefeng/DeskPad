@@ -162,6 +162,9 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
             window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
             window.ignoresMouseEvents = true
             window.hasShadow = false
+            // Keep the window out of screen captures, including DeskPad's own: should it ever end up on (or be
+            // mirrored to) the virtual display, it would otherwise show itself recursively.
+            window.sharingType = .none
             layoutSafeAreaWindow()
 
             display.apply(makeSettings())
@@ -171,8 +174,7 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
                 guard let self = self, self.isSafeAreaActive else {
                     return
                 }
-                self.setResolution(resolution)
-                SafeArea.makeMainDisplay(self.display.displayID)
+                SafeArea.makeMainDisplay(self.display.displayID, mode: self.displayMode(for: resolution))
                 self.cursorConfinement = CursorConfinement(displayID: self.display.displayID)
             }
         } else if isSafeAreaActive {
@@ -182,6 +184,7 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
             display.apply(makeSettings())
             window.ignoresMouseEvents = false
             window.hasShadow = true
+            window.sharingType = .readOnly
             window.collectionBehavior = [.fullScreenPrimary]
             window.level = UserDefaults.standard.bool(forKey: UserDefaultsKey.keepOnTop) ? .floating : .normal
             if let styleMask = styleMaskBeforeSafeArea {
@@ -209,6 +212,12 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         }
         window.setFrame(SafeArea.intactFrame(of: screen), display: true)
         window.orderFrontRegardless()
+        if window.screen?.displayID == display.displayID {
+            // Ended up on the virtual display (e.g. as the arrangement was still changing): try again shortly.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.layoutSafeAreaWindow()
+            }
+        }
     }
 
     /// Reads a resolution passed on launch, e.g. `open -a DeskPad --args --width 1280 --height 800`.
@@ -229,15 +238,22 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         return CGSize(width: width, height: height)
     }
 
-    private func setResolution(_ resolution: CGSize) {
+    /// The virtual display's mode with the given resolution, preferring HiDPI.
+    private func displayMode(for resolution: CGSize) -> CGDisplayMode? {
         let options = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
         guard let modes = CGDisplayCopyAllDisplayModes(display.displayID, options) as? [CGDisplayMode] else {
-            return
+            return nil
         }
         let matchingModes = modes.filter { $0.width == Int(resolution.width) && $0.height == Int(resolution.height) }
-        // Prefer HiDPI modes.
         guard let mode = matchingModes.max(by: { $0.pixelWidth < $1.pixelWidth }) else {
             NSLog("DeskPad: no display mode for resolution \(Int(resolution.width))x\(Int(resolution.height))")
+            return nil
+        }
+        return mode
+    }
+
+    private func setResolution(_ resolution: CGSize) {
+        guard let mode = displayMode(for: resolution) else {
             return
         }
         var config: CGDisplayConfigRef?
