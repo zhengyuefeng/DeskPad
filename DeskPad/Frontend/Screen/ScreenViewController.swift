@@ -96,6 +96,13 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         self.display = display
 
         display.apply(makeSettings())
+        // macOS may set up the new display as a mirror (e.g. remembered from before).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else {
+                return
+            }
+            SafeArea.stopMirroring(self.display.displayID)
+        }
 
         NotificationCenter.default.addObserver(
             self,
@@ -105,7 +112,7 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(layoutSafeAreaWindow),
+            selector: #selector(screenParametersDidChange),
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
@@ -200,6 +207,11 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
                 }
             }
         }
+    }
+
+    @objc private func screenParametersDidChange() {
+        SafeArea.stopMirroring(display.displayID)
+        layoutSafeAreaWindow()
     }
 
     @objc private func layoutSafeAreaWindow() {

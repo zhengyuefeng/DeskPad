@@ -108,6 +108,33 @@ enum SafeArea {
         CGCompleteDisplayConfiguration(config, .forAppOnly)
     }
 
+    /// Stops any mirroring involving the virtual display. Mirroring it never makes sense: the DeskPad window,
+    /// shown on the mirrored physical screen, would show itself recursively. macOS may also restore mirroring
+    /// it remembered for the display, so the change is made permanent.
+    static func stopMirroring(_ virtualDisplayID: CGDirectDisplayID) {
+        guard CGDisplayIsInMirrorSet(virtualDisplayID) != 0 else {
+            return
+        }
+        NSLog("DeskPad: virtual display %u is mirrored, turning mirroring off", virtualDisplayID)
+        var displayCount: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &displayCount)
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        CGGetOnlineDisplayList(displayCount, &displayIDs, &displayCount)
+        let mirroredDisplayID = CGDisplayMirrorsDisplay(virtualDisplayID)
+        let involvedDisplayIDs = displayIDs.prefix(Int(displayCount)).filter {
+            $0 == virtualDisplayID || $0 == mirroredDisplayID || CGDisplayMirrorsDisplay($0) == virtualDisplayID
+        }
+
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success else {
+            return
+        }
+        for displayID in involvedDisplayIDs {
+            CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
+        }
+        CGCompleteDisplayConfiguration(config, .permanently)
+    }
+
     /// Undoes `makeMainDisplay`.
     static func restoreDisplayArrangement() {
         CGRestorePermanentDisplayConfiguration()

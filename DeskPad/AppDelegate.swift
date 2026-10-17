@@ -290,7 +290,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// Shows the safe area selection and turns safe area mode on with the selected area.
     /// If the selection is cancelled, safe area mode is turned back on only if `wasEnabled`.
-    private func presentSafeAreaSelection(restoringEnabled wasEnabled: Bool) {
+    private func presentSafeAreaSelection(restoringEnabled wasEnabled: Bool, remainingAttempts: Int = 10) {
         let finish = { (insets: NSEdgeInsets?) in
             if let insets = insets {
                 SafeArea.insets = insets
@@ -303,8 +303,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
         }
         let virtualDisplayID = store.state.screenConfigurationState.displayID ?? kCGNullDirectDisplay
+        NSLog(
+            "DeskPad: selecting safe area, virtual display %u, screens %@",
+            virtualDisplayID,
+            NSScreen.screens.map { "\($0.displayID) \(NSStringFromRect($0.frame))" }.description
+        )
         guard let screen = SafeArea.physicalScreen(excluding: virtualDisplayID) else {
-            finish(nil)
+            // The physical screen may not be available yet, e.g. while mirroring is being turned off.
+            if remainingAttempts > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.presentSafeAreaSelection(restoringEnabled: wasEnabled, remainingAttempts: remainingAttempts - 1)
+                }
+            } else {
+                let alert = NSAlert()
+                alert.messageText = "No screen to select the safe area on"
+                alert.informativeText = "DeskPad couldn't find a physical screen besides its virtual display. "
+                    + "If the screens are mirrored, turn mirroring off in System Settings › Displays and try again "
+                    + "via Window › Select Safe Area…."
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+                finish(nil)
+            }
             return
         }
         SafeArea.selectIntactArea(on: screen, completion: finish)
