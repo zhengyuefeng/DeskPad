@@ -22,6 +22,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     var window: NSWindow!
     private var hotKeyRef: EventHotKeyRef?
     private var safeAreaOffHotKeyRef: EventHotKeyRef?
+    private var quitHotKeyRef: EventHotKeyRef?
     private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -89,8 +90,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: - Hot key
 
-    /// Registers the global shortcuts: ⌃⌥⌘D moves the cursor onto the virtual display and back, and ⌃⌥⌘S turns
-    /// safe area mode off (e.g. if the screen stays black).
+    /// Registers the global shortcuts: ⌃⌥⌘D moves the cursor onto the virtual display and back, ⌃⌥⌘S turns
+    /// safe area mode off (e.g. if the screen stays black) and ⌃⌥⌘Q quits DeskPad.
     private func registerToggleCursorHotKey() {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
@@ -110,6 +111,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             case 2:
                 SafeArea.isEnabled = false
                 NotificationCenter.default.post(name: SafeArea.settingsDidChangeNotification, object: nil)
+            case 3:
+                NSApp.terminate(nil)
             default:
                 break
             }
@@ -131,6 +134,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             GetApplicationEventTarget(),
             0,
             &safeAreaOffHotKeyRef
+        )
+        RegisterEventHotKey(
+            UInt32(kVK_ANSI_Q),
+            UInt32(cmdKey | optionKey | controlKey),
+            EventHotKeyID(signature: signature, id: 3),
+            GetApplicationEventTarget(),
+            0,
+            &quitHotKeyRef
         )
     }
 
@@ -301,7 +312,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             ("Move Cursor to/from DeskPad Display (⌃⌥⌘D)", #selector(toggleCursorLocation(_:))),
             nil,
             ("Show DeskPad Window", #selector(showWindow(_:))),
-            ("Quit DeskPad", #selector(quit(_:))),
+            ("Quit DeskPad (⌃⌥⌘Q)", #selector(quit(_:))),
         ]
         for item in items {
             guard let item = item else {
@@ -447,7 +458,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if let screen = NSScreen.screens.first(where: { CGDisplayIsBuiltin($0.displayID) != 0 }) ?? NSScreen.main {
             informativeText += "\n\nScreen size: \(Int(screen.frame.width)) × \(Int(screen.frame.height)) points."
         }
-        informativeText += "\n\nPress ⌃⌥⌘S at any time, or hold Option while launching DeskPad, to turn safe area mode off."
+        informativeText += "\n\nPress ⌃⌥⌘S at any time, or hold Option while launching DeskPad, to turn safe area mode off. "
+            + "Press ⌃⌥⌘Q to quit DeskPad from anywhere."
         alert.informativeText = informativeText
         alert.accessoryView = gridView
         alert.addButton(withTitle: "Enable")
