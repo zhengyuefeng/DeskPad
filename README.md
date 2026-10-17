@@ -38,6 +38,10 @@ The window size and position are remembered per resolution. If the DeskPad windo
 
 To get additional virtual displays, choose **DeskPad** → **New DeskPad Display** (⌘N), which launches another DeskPad instance with its own display.
 
+## Safe area mode (damaged screens)
+
+If part of your screen is damaged along one or more edges, choose **Window** → **Configure Safe Area…** and enter how many points along each edge are damaged. DeskPad then sizes its virtual display to the intact part of the built-in screen (or the first physical screen), makes it the main display (menu bar, Dock and new windows go there), shows it in a borderless window that exactly covers the intact part, and keeps the cursor out of the damaged part. Quitting DeskPad or turning **Window** → **Safe Area Mode** off restores the normal layout. Hold Option while launching DeskPad to start with safe area mode turned off.
+
 DeskPad can also be launched with a specific resolution from the terminal:
 
 ```sh

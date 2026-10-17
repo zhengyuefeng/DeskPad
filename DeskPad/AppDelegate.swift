@@ -10,6 +10,11 @@ enum UserDefaultsKey {
     static let keepOnTop = "keepOnTop"
     static let bringToFrontOnCursorEnter = "bringToFrontOnCursorEnter"
     static let windowSizes = "windowSizes"
+    static let safeAreaEnabled = "safeAreaEnabled"
+    static let safeAreaInsetTop = "safeAreaInsetTop"
+    static let safeAreaInsetLeft = "safeAreaInsetLeft"
+    static let safeAreaInsetBottom = "safeAreaInsetBottom"
+    static let safeAreaInsetRight = "safeAreaInsetRight"
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
@@ -20,7 +25,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         UserDefaults.standard.register(defaults: [
             UserDefaultsKey.keepOnTop: false,
             UserDefaultsKey.bringToFrontOnCursorEnter: true,
+            UserDefaultsKey.safeAreaEnabled: false,
         ])
+        // Holding Option while launching turns safe area mode off, in case it was misconfigured.
+        if NSEvent.modifierFlags.contains(.option) {
+            SafeArea.isEnabled = false
+        }
 
         let viewController = ScreenViewController()
         window = NSWindow(contentViewController: viewController)
@@ -160,6 +170,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
         bringToFrontMenuItem.target = self
         windowMenu.addItem(bringToFrontMenuItem)
+        windowMenu.addItem(.separator())
+        let safeAreaMenuItem = NSMenuItem(
+            title: "Safe Area Mode",
+            action: #selector(toggleSafeArea(_:)),
+            keyEquivalent: ""
+        )
+        safeAreaMenuItem.target = self
+        windowMenu.addItem(safeAreaMenuItem)
+        let configureSafeAreaMenuItem = NSMenuItem(
+            title: "Configure Safe Area…",
+            action: #selector(configureSafeArea(_:)),
+            keyEquivalent: ""
+        )
+        configureSafeAreaMenuItem.target = self
+        windowMenu.addItem(configureSafeAreaMenuItem)
         let windowMenuItem = NSMenuItem()
         windowMenuItem.submenu = windowMenu
         mainMenu.addItem(windowMenuItem)
@@ -193,7 +218,63 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
     }
 
+    @objc private func toggleSafeArea(_ sender: NSMenuItem) {
+        if SafeArea.isEnabled {
+            SafeArea.isEnabled = false
+            NotificationCenter.default.post(name: SafeArea.settingsDidChangeNotification, object: nil)
+        } else {
+            configureSafeArea(sender)
+        }
+    }
+
+    /// Asks for the size of the damaged regions along each edge of the physical screen and turns on safe area mode.
+    @objc private func configureSafeArea(_: NSMenuItem) {
+        let insets = SafeArea.insets
+        let fields = [insets.top, insets.left, insets.bottom, insets.right].map { value -> NSTextField in
+            let field = NSTextField(string: String(Int(value)))
+            field.formatter = {
+                let formatter = NumberFormatter()
+                formatter.allowsFloats = false
+                formatter.minimum = 0
+                return formatter
+            }()
+            field.widthAnchor.constraint(equalToConstant: 80).isActive = true
+            return field
+        }
+        let labels = ["Top", "Left", "Bottom", "Right"].map { NSTextField(labelWithString: "\($0):") }
+        let gridView = NSGridView(views: zip(labels, fields).map { [$0, $1] as [NSView] })
+        gridView.rowSpacing = 8
+        gridView.column(at: 0).xPlacement = .trailing
+        gridView.frame.size = gridView.fittingSize
+
+        let alert = NSAlert()
+        alert.messageText = "Safe Area"
+        var informativeText = "Enter how many points along each edge of the screen are damaged. "
+            + "DeskPad will only show content in the remaining area and keep the cursor out of the damaged part."
+        if let screen = NSScreen.screens.first(where: { CGDisplayIsBuiltin($0.displayID) != 0 }) ?? NSScreen.main {
+            informativeText += "\n\nScreen size: \(Int(screen.frame.width)) × \(Int(screen.frame.height)) points."
+        }
+        informativeText += "\n\nHold Option while launching DeskPad to turn safe area mode off."
+        alert.informativeText = informativeText
+        alert.accessoryView = gridView
+        alert.addButton(withTitle: "Enable")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = fields.first
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        let values = fields.map { CGFloat(max($0.integerValue, 0)) }
+        SafeArea.insets = NSEdgeInsets(top: values[0], left: values[1], bottom: values[2], right: values[3])
+        SafeArea.isEnabled = true
+        NotificationCenter.default.post(name: SafeArea.settingsDidChangeNotification, object: nil)
+    }
+
     private func applyKeepOnTop() {
+        guard !SafeArea.isEnabled else {
+            return
+        }
         window.level = UserDefaults.standard.bool(forKey: UserDefaultsKey.keepOnTop) ? .floating : .normal
     }
 
@@ -201,6 +282,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         switch menuItem.action {
         case #selector(toggleKeepOnTop(_:)):
             menuItem.state = UserDefaults.standard.bool(forKey: UserDefaultsKey.keepOnTop) ? .on : .off
+        case #selector(toggleSafeArea(_:)):
+            menuItem.state = SafeArea.isEnabled ? .on : .off
         case #selector(toggleBringToFrontOnCursorEnter(_:)):
             menuItem.state = UserDefaults.standard.bool(forKey: UserDefaultsKey.bringToFrontOnCursorEnter) ? .on : .off
         default:

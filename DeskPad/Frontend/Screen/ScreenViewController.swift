@@ -7,6 +7,34 @@ enum ScreenViewAction: Action {
 
 let maxDisplaySize = CGSize(width: 7680, height: 4800)
 
+private let defaultDisplayModes = [
+    // 32:9
+    CGVirtualDisplayMode(width: 5120, height: 1440, refreshRate: 60),
+    // 21:9 (239:100, 12:5)
+    CGVirtualDisplayMode(width: 5120, height: 2160, refreshRate: 60),
+    CGVirtualDisplayMode(width: 3840, height: 1600, refreshRate: 60),
+    CGVirtualDisplayMode(width: 3440, height: 1440, refreshRate: 60),
+    // 16:9
+    CGVirtualDisplayMode(width: 6016, height: 3384, refreshRate: 60),
+    CGVirtualDisplayMode(width: 5120, height: 2880, refreshRate: 60),
+    CGVirtualDisplayMode(width: 4096, height: 2304, refreshRate: 60),
+    CGVirtualDisplayMode(width: 3840, height: 2160, refreshRate: 60),
+    CGVirtualDisplayMode(width: 2560, height: 1440, refreshRate: 60),
+    CGVirtualDisplayMode(width: 1920, height: 1080, refreshRate: 60),
+    CGVirtualDisplayMode(width: 1600, height: 900, refreshRate: 60),
+    CGVirtualDisplayMode(width: 1366, height: 768, refreshRate: 60),
+    CGVirtualDisplayMode(width: 1280, height: 720, refreshRate: 60),
+    // 16:10
+    CGVirtualDisplayMode(width: 5120, height: 3200, refreshRate: 60),
+    CGVirtualDisplayMode(width: 3840, height: 2400, refreshRate: 60),
+    CGVirtualDisplayMode(width: 2880, height: 1800, refreshRate: 60),
+    CGVirtualDisplayMode(width: 2560, height: 1600, refreshRate: 60),
+    CGVirtualDisplayMode(width: 1920, height: 1200, refreshRate: 60),
+    CGVirtualDisplayMode(width: 1680, height: 1050, refreshRate: 60),
+    CGVirtualDisplayMode(width: 1440, height: 900, refreshRate: 60),
+    CGVirtualDisplayMode(width: 1280, height: 800, refreshRate: 60),
+]
+
 private let displayVendorID: UInt32 = 0x3456
 private let displayProductID: UInt32 = 0x1234
 
@@ -42,6 +70,10 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
     private var isWindowHighlighted = false
     private var previousResolution: CGSize?
     private var previousScaleFactor: CGFloat?
+    private var cursorConfinement: CursorConfinement?
+    private var isSafeAreaActive = false
+    private var styleMaskBeforeSafeArea: NSWindow.StyleMask?
+    private var didAppear = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -63,43 +95,120 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         store.dispatch(ScreenViewAction.setDisplayID(display.displayID))
         self.display = display
 
-        let settings = CGVirtualDisplaySettings()
-        settings.hiDPI = 1
-        settings.modes = [
-            // 32:9
-            CGVirtualDisplayMode(width: 5120, height: 1440, refreshRate: 60),
-            // 21:9 (239:100, 12:5)
-            CGVirtualDisplayMode(width: 5120, height: 2160, refreshRate: 60),
-            CGVirtualDisplayMode(width: 3840, height: 1600, refreshRate: 60),
-            CGVirtualDisplayMode(width: 3440, height: 1440, refreshRate: 60),
-            // 16:9
-            CGVirtualDisplayMode(width: 6016, height: 3384, refreshRate: 60),
-            CGVirtualDisplayMode(width: 5120, height: 2880, refreshRate: 60),
-            CGVirtualDisplayMode(width: 4096, height: 2304, refreshRate: 60),
-            CGVirtualDisplayMode(width: 3840, height: 2160, refreshRate: 60),
-            CGVirtualDisplayMode(width: 2560, height: 1440, refreshRate: 60),
-            CGVirtualDisplayMode(width: 1920, height: 1080, refreshRate: 60),
-            CGVirtualDisplayMode(width: 1600, height: 900, refreshRate: 60),
-            CGVirtualDisplayMode(width: 1366, height: 768, refreshRate: 60),
-            CGVirtualDisplayMode(width: 1280, height: 720, refreshRate: 60),
-            // 16:10
-            CGVirtualDisplayMode(width: 5120, height: 3200, refreshRate: 60),
-            CGVirtualDisplayMode(width: 3840, height: 2400, refreshRate: 60),
-            CGVirtualDisplayMode(width: 2880, height: 1800, refreshRate: 60),
-            CGVirtualDisplayMode(width: 2560, height: 1600, refreshRate: 60),
-            CGVirtualDisplayMode(width: 1920, height: 1200, refreshRate: 60),
-            CGVirtualDisplayMode(width: 1680, height: 1050, refreshRate: 60),
-            CGVirtualDisplayMode(width: 1440, height: 900, refreshRate: 60),
-            CGVirtualDisplayMode(width: 1280, height: 800, refreshRate: 60),
-        ]
-        display.apply(settings)
+        display.apply(makeSettings())
 
-        if let launchResolution = launchResolution() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(updateSafeArea),
+            name: SafeArea.settingsDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(layoutSafeAreaWindow),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+
+        if !SafeArea.isEnabled, let launchResolution = launchResolution() {
             // The display modes take a moment to become available after applying the settings.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 self?.setResolution(launchResolution)
             }
         }
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+
+        if !didAppear {
+            didAppear = true
+            updateSafeArea()
+        }
+    }
+
+    private func makeSettings() -> CGVirtualDisplaySettings {
+        let settings = CGVirtualDisplaySettings()
+        settings.hiDPI = 1
+        var modes = defaultDisplayModes
+        if SafeArea.isEnabled, let screen = SafeArea.physicalScreen(excluding: display.displayID) {
+            let resolution = SafeArea.resolution(for: screen)
+            let width = UInt(resolution.width)
+            let height = UInt(resolution.height)
+            if width > 0, height > 0 {
+                // Offer the size both as is and doubled, so that it is available in HiDPI.
+                modes.insert(CGVirtualDisplayMode(width: width * 2, height: height * 2, refreshRate: 60), at: 0)
+                modes.insert(CGVirtualDisplayMode(width: width, height: height, refreshRate: 60), at: 0)
+            }
+        }
+        settings.modes = modes
+        return settings
+    }
+
+    // MARK: - Safe area
+
+    @objc private func updateSafeArea() {
+        guard let window = view.window else {
+            return
+        }
+        if SafeArea.isEnabled, let screen = SafeArea.physicalScreen(excluding: display.displayID) {
+            if !isSafeAreaActive {
+                styleMaskBeforeSafeArea = window.styleMask
+            }
+            isSafeAreaActive = true
+            window.styleMask = [.borderless]
+            // Above the menu bar of the physical screen.
+            window.level = .screenSaver
+            window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
+            window.ignoresMouseEvents = true
+            window.hasShadow = false
+            layoutSafeAreaWindow()
+
+            display.apply(makeSettings())
+            let resolution = SafeArea.resolution(for: screen)
+            // The display modes take a moment to become available after applying the settings.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self = self, self.isSafeAreaActive else {
+                    return
+                }
+                self.setResolution(resolution)
+                SafeArea.makeMainDisplay(self.display.displayID)
+                self.cursorConfinement = CursorConfinement(displayID: self.display.displayID)
+            }
+        } else if isSafeAreaActive {
+            isSafeAreaActive = false
+            cursorConfinement = nil
+            SafeArea.restoreDisplayArrangement()
+            display.apply(makeSettings())
+            window.ignoresMouseEvents = false
+            window.hasShadow = true
+            window.collectionBehavior = [.fullScreenPrimary]
+            window.level = UserDefaults.standard.bool(forKey: UserDefaultsKey.keepOnTop) ? .floating : .normal
+            if let styleMask = styleMaskBeforeSafeArea {
+                window.styleMask = styleMask
+            }
+            styleMaskBeforeSafeArea = nil
+            if let resolution = previousResolution {
+                if let savedFrame = savedWindowFrame(for: resolution) {
+                    window.setFrame(savedFrame, display: true)
+                } else {
+                    window.setContentSize(resolution)
+                    window.center()
+                }
+            }
+        }
+    }
+
+    @objc private func layoutSafeAreaWindow() {
+        guard
+            isSafeAreaActive,
+            let window = view.window,
+            let screen = SafeArea.physicalScreen(excluding: display.displayID)
+        else {
+            return
+        }
+        window.setFrame(SafeArea.intactFrame(of: screen), display: true)
+        window.orderFrontRegardless()
     }
 
     /// Reads a resolution passed on launch, e.g. `open -a DeskPad --args --width 1280 --height 800`.
@@ -160,7 +269,9 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
             stream = nil
             if let window = view.window {
                 window.contentAspectRatio = viewData.resolution
-                if !window.styleMask.contains(.fullScreen) {
+                if isSafeAreaActive {
+                    layoutSafeAreaWindow()
+                } else if !window.styleMask.contains(.fullScreen) {
                     if let savedFrame = savedWindowFrame(for: viewData.resolution) {
                         window.setFrame(savedFrame, display: true)
                     } else {
@@ -212,6 +323,7 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
     func windowDidChangeScreen(_ notification: Notification) {
         guard
             let window = notification.object as? NSWindow,
+            !isSafeAreaActive,
             !window.styleMask.contains(.fullScreen),
             window.screen?.displayID == display.displayID,
             let targetScreen = NSScreen.screens.first(where: { $0.displayID != display.displayID })
@@ -255,6 +367,7 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         guard
             let window = window,
             let resolution = previousResolution,
+            !isSafeAreaActive,
             !window.styleMask.contains(.fullScreen),
             window.screen?.displayID != display.displayID
         else {
