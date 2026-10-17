@@ -9,6 +9,8 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
     override func loadView() {
         view = NSView()
         view.wantsLayer = true
+        view.layer?.contentsGravity = .resizeAspect
+        view.layer?.backgroundColor = NSColor.black.cgColor
         view.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(didClickOnScreen)))
     }
 
@@ -67,7 +69,7 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
             view.window?.backgroundColor = isWindowHighlighted
                 ? NSColor(named: "TitleBarActive")
                 : NSColor(named: "TitleBarInactive")
-            if isWindowHighlighted {
+            if isWindowHighlighted, UserDefaults.standard.bool(forKey: UserDefaultsKey.bringToFrontOnCursorEnter) {
                 view.window?.orderFrontRegardless()
             }
         }
@@ -80,9 +82,17 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
             previousResolution = viewData.resolution
             previousScaleFactor = viewData.scaleFactor
             stream = nil
-            view.window?.setContentSize(viewData.resolution)
-            view.window?.contentAspectRatio = viewData.resolution
-            view.window?.center()
+            if let window = view.window {
+                window.contentAspectRatio = viewData.resolution
+                if !window.styleMask.contains(.fullScreen) {
+                    if let savedFrame = savedWindowFrame(for: viewData.resolution) {
+                        window.setFrame(savedFrame, display: true)
+                    } else {
+                        window.setContentSize(viewData.resolution)
+                        window.center()
+                    }
+                }
+            }
             let stream = CGDisplayStream(
                 dispatchQueueDisplay: display.displayID,
                 outputWidth: Int(viewData.resolution.width * viewData.scaleFactor),
@@ -115,14 +125,85 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         return window.frameRect(forContentRect: NSRect(origin: .zero, size: screenResolution)).size
     }
 
+    func windowDidEndLiveResize(_ notification: Notification) {
+        saveWindowFrame(of: notification.object as? NSWindow)
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        saveWindowFrame(of: notification.object as? NSWindow)
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        guard
+            let window = notification.object as? NSWindow,
+            !window.styleMask.contains(.fullScreen),
+            window.screen?.displayID == display.displayID,
+            let targetScreen = NSScreen.screens.first(where: { $0.displayID != display.displayID })
+        else {
+            return
+        }
+        // The DeskPad window ended up on its own virtual display, which makes it unreachable.
+        // Move it back onto a physical screen.
+        let visibleFrame = targetScreen.visibleFrame
+        var frame = window.frame
+        if frame.width > visibleFrame.width || frame.height > visibleFrame.height {
+            let scale = min(visibleFrame.width / frame.width, visibleFrame.height / frame.height)
+            frame.size = CGSize(width: frame.width * scale, height: frame.height * scale)
+        }
+        frame.origin = CGPoint(
+            x: visibleFrame.midX - frame.width / 2,
+            y: visibleFrame.midY - frame.height / 2
+        )
+        window.setFrame(frame, display: true)
+    }
+
+    private func windowSizesKey(for resolution: CGSize) -> String {
+        return "\(Int(resolution.width))x\(Int(resolution.height))"
+    }
+
+    private func savedWindowFrame(for resolution: CGSize) -> NSRect? {
+        guard
+            let frames = UserDefaults.standard.dictionary(forKey: UserDefaultsKey.windowSizes) as? [String: String],
+            let frameString = frames[windowSizesKey(for: resolution)]
+        else {
+            return nil
+        }
+        let frame = NSRectFromString(frameString)
+        let isOnPhysicalScreen = NSScreen.screens.contains {
+            $0.displayID != display.displayID && $0.visibleFrame.intersects(frame)
+        }
+        return frame.isEmpty || !isOnPhysicalScreen ? nil : frame
+    }
+
+    private func saveWindowFrame(of window: NSWindow?) {
+        guard
+            let window = window,
+            let resolution = previousResolution,
+            !window.styleMask.contains(.fullScreen),
+            window.screen?.displayID != display.displayID
+        else {
+            return
+        }
+        var frames = UserDefaults.standard.dictionary(forKey: UserDefaultsKey.windowSizes) as? [String: String] ?? [:]
+        frames[windowSizesKey(for: resolution)] = NSStringFromRect(window.frame)
+        UserDefaults.standard.set(frames, forKey: UserDefaultsKey.windowSizes)
+    }
+
     @objc private func didClickOnScreen(_ gestureRecognizer: NSGestureRecognizer) {
         guard let screenResolution = previousResolution else {
             return
         }
+        // The stream is drawn aspect-fit, so account for letterboxing (e.g. in full screen).
+        let scale = min(view.bounds.width / screenResolution.width, view.bounds.height / screenResolution.height)
+        let contentSize = CGSize(width: screenResolution.width * scale, height: screenResolution.height * scale)
+        let contentOrigin = CGPoint(
+            x: (view.bounds.width - contentSize.width) / 2,
+            y: (view.bounds.height - contentSize.height) / 2
+        )
         let clickedPoint = gestureRecognizer.location(in: view)
         let onScreenPoint = NSPoint(
-            x: clickedPoint.x / view.frame.width * screenResolution.width,
-            y: (view.frame.height - clickedPoint.y) / view.frame.height * screenResolution.height
+            x: min(max((clickedPoint.x - contentOrigin.x) / scale, 0), screenResolution.width - 1),
+            y: min(max((contentOrigin.y + contentSize.height - clickedPoint.y) / scale, 0), screenResolution.height - 1)
         )
         store.dispatch(MouseLocationAction.requestMove(toPoint: onScreenPoint))
     }
