@@ -71,6 +71,9 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
     private var previousResolution: CGSize?
     private var previousScaleFactor: CGFloat?
     private var cursorConfinement: CursorConfinement?
+    /// Black window covering the whole physical screen behind the DeskPad window in safe area mode,
+    /// so nothing is shown on its damaged part.
+    private var blackoutWindow: NSWindow?
     private var isSafeAreaActive = false
     private var styleMaskBeforeSafeArea: NSWindow.StyleMask?
     private var didAppear = false
@@ -187,6 +190,8 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         } else if isSafeAreaActive {
             isSafeAreaActive = false
             cursorConfinement = nil
+            blackoutWindow?.orderOut(nil)
+            blackoutWindow = nil
             SafeArea.restoreDisplayArrangement()
             display.apply(makeSettings())
             window.ignoresMouseEvents = false
@@ -224,12 +229,32 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         }
         window.setFrame(SafeArea.intactFrame(of: screen), display: true)
         window.orderFrontRegardless()
+
+        let blackoutWindow = self.blackoutWindow ?? makeBlackoutWindow()
+        self.blackoutWindow = blackoutWindow
+        blackoutWindow.setFrame(SafeArea.currentFrame(of: screen), display: true)
+        blackoutWindow.order(.below, relativeTo: window.windowNumber)
+
         if window.screen?.displayID == display.displayID {
             // Ended up on the virtual display (e.g. as the arrangement was still changing): try again shortly.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.layoutSafeAreaWindow()
             }
         }
+    }
+
+    private func makeBlackoutWindow() -> NSWindow {
+        let window = NSWindow(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.backgroundColor = .black
+        window.isOpaque = true
+        window.hasShadow = false
+        window.isReleasedWhenClosed = false
+        window.ignoresMouseEvents = true
+        window.isExcludedFromWindowsMenu = true
+        window.sharingType = .none
+        window.level = .screenSaver
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
+        return window
     }
 
     /// Reads a resolution passed on launch, e.g. `open -a DeskPad --args --width 1280 --height 800`.

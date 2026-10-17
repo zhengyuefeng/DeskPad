@@ -38,18 +38,23 @@ enum SafeArea {
         return screens.first { CGDisplayIsBuiltin($0.displayID) != 0 } ?? screens.first
     }
 
-    /// The intact part of the given screen, in AppKit (bottom-left origin) coordinates.
-    static func intactFrame(of screen: NSScreen) -> NSRect {
+    /// The frame of the given screen, in AppKit (bottom-left origin) coordinates.
+    static func currentFrame(of screen: NSScreen) -> NSRect {
         // Derive the frame from the current display bounds, as `NSScreen.frame` can lag behind
         // right after the display arrangement changed.
         let bounds = CGDisplayBounds(screen.displayID)
         let primaryDisplayHeight = CGDisplayBounds(CGMainDisplayID()).height
-        let frame = bounds.isEmpty ? screen.frame : NSRect(
+        return bounds.isEmpty ? screen.frame : NSRect(
             x: bounds.minX,
             y: primaryDisplayHeight - bounds.maxY,
             width: bounds.width,
             height: bounds.height
         )
+    }
+
+    /// The intact part of the given screen, in AppKit (bottom-left origin) coordinates.
+    static func intactFrame(of screen: NSScreen) -> NSRect {
+        let frame = currentFrame(of: screen)
         let insets = self.insets
         return NSRect(
             x: frame.minX + insets.left,
