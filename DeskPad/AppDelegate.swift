@@ -11,6 +11,7 @@ enum UserDefaultsKey {
     static let bringToFrontOnCursorEnter = "bringToFrontOnCursorEnter"
     static let windowSizes = "windowSizes"
     static let safeAreaEnabled = "safeAreaEnabled"
+    static let selectSafeAreaOnLaunch = "selectSafeAreaOnLaunch"
     static let safeAreaInsetTop = "safeAreaInsetTop"
     static let safeAreaInsetLeft = "safeAreaInsetLeft"
     static let safeAreaInsetBottom = "safeAreaInsetBottom"
@@ -26,9 +27,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             UserDefaultsKey.keepOnTop: false,
             UserDefaultsKey.bringToFrontOnCursorEnter: true,
             UserDefaultsKey.safeAreaEnabled: false,
+            UserDefaultsKey.selectSafeAreaOnLaunch: true,
         ])
         // Holding Option while launching turns safe area mode off, in case it was misconfigured.
-        if NSEvent.modifierFlags.contains(.option) {
+        let isOptionPressed = NSEvent.modifierFlags.contains(.option)
+        if isOptionPressed {
+            SafeArea.isEnabled = false
+        }
+        let selectsSafeAreaOnLaunch = !isOptionPressed
+            && UserDefaults.standard.bool(forKey: UserDefaultsKey.selectSafeAreaOnLaunch)
+        let wasSafeAreaEnabled = SafeArea.isEnabled
+        if selectsSafeAreaOnLaunch {
+            // Safe area mode is turned on once the area has been selected.
             SafeArea.isEnabled = false
         }
 
@@ -51,6 +61,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         registerToggleCursorHotKey()
 
         store.dispatch(AppDelegateAction.didFinishLaunching)
+
+        if selectsSafeAreaOnLaunch {
+            // Give the virtual display a moment to show up.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                self.presentSafeAreaSelection(restoringEnabled: wasSafeAreaEnabled)
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
@@ -192,6 +209,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
         configureSafeAreaMenuItem.target = self
         windowMenu.addItem(configureSafeAreaMenuItem)
+        let selectSafeAreaOnLaunchMenuItem = NSMenuItem(
+            title: "Select Safe Area on Launch",
+            action: #selector(toggleSelectSafeAreaOnLaunch(_:)),
+            keyEquivalent: ""
+        )
+        selectSafeAreaOnLaunchMenuItem.target = self
+        windowMenu.addItem(selectSafeAreaOnLaunchMenuItem)
         let windowMenuItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
         windowMenuItem.submenu = windowMenu
         mainMenu.addItem(windowMenuItem)
@@ -232,6 +256,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             ("Safe Area Mode", #selector(toggleSafeArea(_:))),
             ("Select Safe Area…", #selector(selectSafeArea(_:))),
             ("Enter Safe Area Insets…", #selector(configureSafeArea(_:))),
+            ("Select Safe Area on Launch", #selector(toggleSelectSafeAreaOnLaunch(_:))),
         ] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
@@ -259,22 +284,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         // Give the display arrangement a moment to be restored.
         DispatchQueue.main.asyncAfter(deadline: .now() + (wasEnabled ? 1 : 0)) {
-            let virtualDisplayID = store.state.screenConfigurationState.displayID ?? kCGNullDirectDisplay
-            guard let screen = SafeArea.physicalScreen(excluding: virtualDisplayID) else {
-                return
+            self.presentSafeAreaSelection(restoringEnabled: wasEnabled)
+        }
+    }
+
+    /// Shows the safe area selection and turns safe area mode on with the selected area.
+    /// If the selection is cancelled, safe area mode is turned back on only if `wasEnabled`.
+    private func presentSafeAreaSelection(restoringEnabled wasEnabled: Bool) {
+        let finish = { (insets: NSEdgeInsets?) in
+            if let insets = insets {
+                SafeArea.insets = insets
+                SafeArea.isEnabled = true
+            } else {
+                SafeArea.isEnabled = wasEnabled
             }
-            SafeArea.selectIntactArea(on: screen) { insets in
-                if let insets = insets {
-                    SafeArea.insets = insets
-                    SafeArea.isEnabled = true
-                } else {
-                    SafeArea.isEnabled = wasEnabled
-                }
-                if SafeArea.isEnabled {
-                    NotificationCenter.default.post(name: SafeArea.settingsDidChangeNotification, object: nil)
-                }
+            if SafeArea.isEnabled {
+                NotificationCenter.default.post(name: SafeArea.settingsDidChangeNotification, object: nil)
             }
         }
+        let virtualDisplayID = store.state.screenConfigurationState.displayID ?? kCGNullDirectDisplay
+        guard let screen = SafeArea.physicalScreen(excluding: virtualDisplayID) else {
+            finish(nil)
+            return
+        }
+        SafeArea.selectIntactArea(on: screen, completion: finish)
+    }
+
+    @objc private func toggleSelectSafeAreaOnLaunch(_: NSMenuItem) {
+        let defaults = UserDefaults.standard
+        defaults.set(
+            !defaults.bool(forKey: UserDefaultsKey.selectSafeAreaOnLaunch),
+            forKey: UserDefaultsKey.selectSafeAreaOnLaunch
+        )
     }
 
     /// Asks for the size of the damaged regions along each edge of the physical screen and turns on safe area mode.
@@ -334,6 +375,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             menuItem.state = UserDefaults.standard.bool(forKey: UserDefaultsKey.keepOnTop) ? .on : .off
         case #selector(toggleSafeArea(_:)):
             menuItem.state = SafeArea.isEnabled ? .on : .off
+        case #selector(toggleSelectSafeAreaOnLaunch(_:)):
+            menuItem.state = UserDefaults.standard.bool(forKey: UserDefaultsKey.selectSafeAreaOnLaunch) ? .on : .off
         case #selector(toggleBringToFrontOnCursorEnter(_:)):
             menuItem.state = UserDefaults.standard.bool(forKey: UserDefaultsKey.bringToFrontOnCursorEnter) ? .on : .off
         default:
