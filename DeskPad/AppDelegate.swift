@@ -178,8 +178,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
         safeAreaMenuItem.target = self
         windowMenu.addItem(safeAreaMenuItem)
+        let selectSafeAreaMenuItem = NSMenuItem(
+            title: "Select Safe Area…",
+            action: #selector(selectSafeArea(_:)),
+            keyEquivalent: ""
+        )
+        selectSafeAreaMenuItem.target = self
+        windowMenu.addItem(selectSafeAreaMenuItem)
         let configureSafeAreaMenuItem = NSMenuItem(
-            title: "Configure Safe Area…",
+            title: "Enter Safe Area Insets…",
             action: #selector(configureSafeArea(_:)),
             keyEquivalent: ""
         )
@@ -223,7 +230,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             SafeArea.isEnabled = false
             NotificationCenter.default.post(name: SafeArea.settingsDidChangeNotification, object: nil)
         } else {
-            configureSafeArea(sender)
+            selectSafeArea(sender)
+        }
+    }
+
+    /// Lets the user drag out the intact part of the physical screen and turns on safe area mode.
+    @objc private func selectSafeArea(_: NSMenuItem) {
+        let wasEnabled = SafeArea.isEnabled
+        if wasEnabled {
+            // While safe area mode is on, the cursor can't reach the physical screen.
+            SafeArea.isEnabled = false
+            NotificationCenter.default.post(name: SafeArea.settingsDidChangeNotification, object: nil)
+        }
+        // Give the display arrangement a moment to be restored.
+        DispatchQueue.main.asyncAfter(deadline: .now() + (wasEnabled ? 1 : 0)) {
+            let virtualDisplayID = store.state.screenConfigurationState.displayID ?? kCGNullDirectDisplay
+            guard let screen = SafeArea.physicalScreen(excluding: virtualDisplayID) else {
+                return
+            }
+            SafeArea.selectIntactArea(on: screen) { insets in
+                if let insets = insets {
+                    SafeArea.insets = insets
+                    SafeArea.isEnabled = true
+                } else {
+                    SafeArea.isEnabled = wasEnabled
+                }
+                if SafeArea.isEnabled {
+                    NotificationCenter.default.post(name: SafeArea.settingsDidChangeNotification, object: nil)
+                }
+            }
         }
     }
 
