@@ -7,6 +7,27 @@ enum ScreenViewAction: Action {
 
 let maxDisplaySize = CGSize(width: 7680, height: 4800)
 
+private let displayVendorID: UInt32 = 0x3456
+private let displayProductID: UInt32 = 0x1234
+
+/// Every DeskPad instance needs a virtual display with a unique identity, otherwise macOS rejects it
+/// ("invalid display identifier") and no window/display shows up. Use the lowest serial number not taken
+/// by another DeskPad display, so a single instance keeps its identity (and macOS its settings) across launches.
+private func availableDisplaySerialNumber() -> UInt32 {
+    var displayCount: UInt32 = 0
+    CGGetOnlineDisplayList(0, nil, &displayCount)
+    var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+    CGGetOnlineDisplayList(displayCount, &displayIDs, &displayCount)
+    let usedSerialNumbers = Set(displayIDs.prefix(Int(displayCount)).filter {
+        CGDisplayVendorNumber($0) == displayVendorID && CGDisplayModelNumber($0) == displayProductID
+    }.map(CGDisplaySerialNumber))
+    var serialNumber: UInt32 = 1
+    while usedSerialNumbers.contains(serialNumber) {
+        serialNumber += 1
+    }
+    return serialNumber
+}
+
 class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDelegate {
     override func loadView() {
         view = NSView()
@@ -27,15 +48,16 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
 
         let descriptor = CGVirtualDisplayDescriptor()
         descriptor.setDispatchQueue(DispatchQueue.main)
-        descriptor.name = "DeskPad Display"
+        let serialNumber = availableDisplaySerialNumber()
+        descriptor.name = serialNumber == 1 ? "DeskPad Display" : "DeskPad Display \(serialNumber)"
         // HiDPI modes need twice the pixels of the mode itself, so leave enough room
         // for e.g. 1920x1200 and 2560x1600 to be offered in HiDPI.
         descriptor.maxPixelsWide = UInt32(maxDisplaySize.width)
         descriptor.maxPixelsHigh = UInt32(maxDisplaySize.height)
         descriptor.sizeInMillimeters = CGSize(width: 1600, height: 1000)
-        descriptor.productID = 0x1234
-        descriptor.vendorID = 0x3456
-        descriptor.serialNum = 0x0001
+        descriptor.productID = displayProductID
+        descriptor.vendorID = displayVendorID
+        descriptor.serialNum = serialNumber
 
         let display = CGVirtualDisplay(descriptor: descriptor)
         store.dispatch(ScreenViewAction.setDisplayID(display.displayID))
@@ -71,6 +93,50 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
             CGVirtualDisplayMode(width: 1280, height: 800, refreshRate: 60),
         ]
         display.apply(settings)
+
+        if let launchResolution = launchResolution() {
+            // The display modes take a moment to become available after applying the settings.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.setResolution(launchResolution)
+            }
+        }
+    }
+
+    /// Reads a resolution passed on launch, e.g. `open -a DeskPad --args --width 1280 --height 800`.
+    private func launchResolution() -> CGSize? {
+        func value(for name: String) -> Int? {
+            let arguments = CommandLine.arguments
+            guard
+                let index = arguments.firstIndex(where: { $0 == "--\(name)" || $0 == "-\(name)" }),
+                index + 1 < arguments.count
+            else {
+                return nil
+            }
+            return Int(arguments[index + 1])
+        }
+        guard let width = value(for: "width"), let height = value(for: "height"), width > 0, height > 0 else {
+            return nil
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    private func setResolution(_ resolution: CGSize) {
+        let options = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
+        guard let modes = CGDisplayCopyAllDisplayModes(display.displayID, options) as? [CGDisplayMode] else {
+            return
+        }
+        let matchingModes = modes.filter { $0.width == Int(resolution.width) && $0.height == Int(resolution.height) }
+        // Prefer HiDPI modes.
+        guard let mode = matchingModes.max(by: { $0.pixelWidth < $1.pixelWidth }) else {
+            NSLog("DeskPad: no display mode for resolution \(Int(resolution.width))x\(Int(resolution.height))")
+            return
+        }
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success else {
+            return
+        }
+        CGConfigureDisplayWithDisplayMode(config, display.displayID, mode, nil)
+        CGCompleteDisplayConfiguration(config, .permanently)
     }
 
     override func update(with viewData: ScreenViewData) {

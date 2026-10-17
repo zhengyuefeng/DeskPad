@@ -101,6 +101,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             keyEquivalent: ""
         ))
         appMenu.addItem(.separator())
+        let newDisplayMenuItem = NSMenuItem(
+            title: "New DeskPad Display",
+            action: #selector(openNewInstance(_:)),
+            keyEquivalent: "n"
+        )
+        newDisplayMenuItem.target = self
+        appMenu.addItem(newDisplayMenuItem)
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(
             title: "Quit DeskPad",
             action: #selector(NSApplication.terminate(_:)),
@@ -158,6 +166,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         NSApplication.shared.windowsMenu = windowMenu
 
         return mainMenu
+    }
+
+    /// Each DeskPad instance provides one virtual display, so additional displays are separate instances.
+    @objc private func openNewInstance(_: NSMenuItem) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
     }
 
     @objc private func toggleCursorLocation(_: NSMenuItem) {

@@ -36,6 +36,14 @@ The **Window** menu also offers:
 
 The window size and position are remembered per resolution. If the DeskPad window ever ends up on the virtual display itself, it moves back to a physical screen; clicking the Dock icon also brings it back to the front.
 
+To get additional virtual displays, choose **DeskPad** → **New DeskPad Display** (⌘N), which launches another DeskPad instance with its own display.
+
+DeskPad can also be launched with a specific resolution from the terminal:
+
+```sh
+open -a DeskPad --args --width 1280 --height 800
+```
+
 <h3 align="center">
   <a href="https://github.com/Stengo/DeskPad/blob/main/demonstration.gif">
   <img src="https://github.com/Stengo/DeskPad/blob/main/demonstration.gif?raw=true" alt="DeskPad Demonstration">
