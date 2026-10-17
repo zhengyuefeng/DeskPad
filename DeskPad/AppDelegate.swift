@@ -124,7 +124,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         ))
-        let appMenuItem = NSMenuItem()
+        let appMenuItem = NSMenuItem(title: "DeskPad", action: nil, keyEquivalent: "")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
@@ -192,7 +192,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
         configureSafeAreaMenuItem.target = self
         windowMenu.addItem(configureSafeAreaMenuItem)
-        let windowMenuItem = NSMenuItem()
+        let windowMenuItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
         windowMenuItem.submenu = windowMenu
         mainMenu.addItem(windowMenuItem)
         NSApplication.shared.windowsMenu = windowMenu
@@ -223,6 +223,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             !defaults.bool(forKey: UserDefaultsKey.bringToFrontOnCursorEnter),
             forKey: UserDefaultsKey.bringToFrontOnCursorEnter
         )
+    }
+
+    /// The Dock icon's menu also offers the safe area options, as the menu bar may be on the damaged part of the screen.
+    func applicationDockMenu(_: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        for (title, action) in [
+            ("Safe Area Mode", #selector(toggleSafeArea(_:))),
+            ("Select Safe Area…", #selector(selectSafeArea(_:))),
+            ("Enter Safe Area Insets…", #selector(configureSafeArea(_:))),
+        ] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        return menu
     }
 
     @objc private func toggleSafeArea(_ sender: NSMenuItem) {
