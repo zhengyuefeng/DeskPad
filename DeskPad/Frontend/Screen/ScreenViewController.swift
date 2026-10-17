@@ -74,6 +74,7 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
     /// Black window covering the whole physical screen behind the DeskPad window in safe area mode,
     /// so nothing is shown on its damaged part.
     private var blackoutWindow: NSWindow?
+    private var lastFrameDate = Date.distantPast
     private var isSafeAreaActive = false
     private var styleMaskBeforeSafeArea: NSWindow.StyleMask?
     private var didAppear = false
@@ -99,13 +100,6 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         self.display = display
 
         display.apply(makeSettings())
-        // macOS may set up the new display as a mirror (e.g. remembered from before).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            guard let self = self else {
-                return
-            }
-            SafeArea.stopMirroring(self.display.displayID)
-        }
 
         NotificationCenter.default.addObserver(
             self,
@@ -161,6 +155,9 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         guard let window = view.window else {
             return
         }
+        if SafeArea.isEnabled, !isSafeAreaActive, !SafeArea.ensureScreenRecordingAccess() {
+            SafeArea.isEnabled = false
+        }
         if SafeArea.isEnabled, let screen = SafeArea.physicalScreen(excluding: display.displayID) {
             if !isSafeAreaActive {
                 styleMaskBeforeSafeArea = window.styleMask
@@ -186,6 +183,7 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
                 }
                 SafeArea.makeMainDisplay(self.display.displayID, mode: self.displayMode(for: resolution))
                 self.cursorConfinement = CursorConfinement(displayID: self.display.displayID)
+                self.turnOffSafeAreaIfNoFrames(since: Date())
             }
         } else if isSafeAreaActive {
             isSafeAreaActive = false
@@ -214,8 +212,27 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         }
     }
 
+    /// Without frames from the virtual display, safe area mode would leave the screen black (and the cursor
+    /// confined to a display that can't be seen), so it's turned off again.
+    private func turnOffSafeAreaIfNoFrames(since date: Date) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self = self, self.isSafeAreaActive, self.lastFrameDate < date else {
+                return
+            }
+            NSLog("DeskPad: no frames from the virtual display, turning safe area mode off")
+            SafeArea.isEnabled = false
+            self.updateSafeArea()
+            let alert = NSAlert()
+            alert.messageText = "Safe area mode was turned off"
+            alert.informativeText = "DeskPad didn't receive any picture from its virtual display, so the screen "
+                + "would have stayed black. Make sure DeskPad is allowed in System Settings › Privacy & Security › "
+                + "Screen & System Audio Recording, quit and reopen DeskPad, then try again."
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
+    }
+
     @objc private func screenParametersDidChange() {
-        SafeArea.stopMirroring(display.displayID)
         layoutSafeAreaWindow()
     }
 
@@ -345,6 +362,7 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
                 handler: { [weak self] _, _, frameSurface, _ in
                     if let surface = frameSurface {
                         self?.view.layer?.contents = surface
+                        self?.lastFrameDate = Date()
                     }
                 }
             )

@@ -71,8 +71,8 @@ enum SafeArea {
     }
 
     /// Switches the virtual display to `mode` and makes it the main display (so it gets the menu bar, Dock and
-    /// new windows) by moving it to the origin and placing all other displays to its right. Any mirroring is
-    /// turned off, as a physical screen mirroring the virtual display would show the DeskPad window within
+    /// new windows) by moving it to the origin and placing all other displays to its right. Mirroring of the
+    /// virtual display is turned off, as a physical screen mirroring it would show the DeskPad window within
     /// itself. All of this happens in one configuration, which only lasts while DeskPad runs.
     static func makeMainDisplay(_ virtualDisplayID: CGDirectDisplayID, mode: CGDisplayMode?) {
         var displayCount: UInt32 = 0
@@ -80,9 +80,16 @@ enum SafeArea {
         var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
         CGGetOnlineDisplayList(displayCount, &displayIDs, &displayCount)
         let otherDisplayIDs = displayIDs.prefix(Int(displayCount)).filter { $0 != virtualDisplayID }
-        // Displays that currently mirror another one have the same bounds as it, so they are placed separately.
-        let extendedDisplayIDs = otherDisplayIDs.filter { CGDisplayIsInMirrorSet($0) == 0 }
-        let mirroringDisplayIDs = otherDisplayIDs.filter { CGDisplayIsInMirrorSet($0) != 0 }
+        // Only mirroring involving the virtual display is turned off; other mirror sets are left alone (and
+        // move along with the display they mirror).
+        let virtualMirrorPartnerIDs = otherDisplayIDs.filter {
+            CGDisplayMirrorsDisplay($0) == virtualDisplayID || CGDisplayMirrorsDisplay(virtualDisplayID) == $0
+        }
+        let extendedDisplayIDs = otherDisplayIDs.filter {
+            !virtualMirrorPartnerIDs.contains($0) && CGDisplayMirrorsDisplay($0) == kCGNullDirectDisplay
+        }
+        // Displays that mirrored the virtual display have its bounds, so they are placed separately.
+        let mirroringDisplayIDs = virtualMirrorPartnerIDs
         let extendedBounds = extendedDisplayIDs.map(CGDisplayBounds)
         let minX = extendedBounds.map(\.minX).min() ?? 0
         let minY = extendedBounds.map(\.minY).min() ?? 0
@@ -93,7 +100,7 @@ enum SafeArea {
         guard CGBeginDisplayConfiguration(&config) == .success else {
             return
         }
-        for displayID in [virtualDisplayID] + otherDisplayIDs where CGDisplayIsInMirrorSet(displayID) != 0 {
+        for displayID in [virtualDisplayID] + virtualMirrorPartnerIDs where CGDisplayIsInMirrorSet(displayID) != 0 {
             CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
         }
         if let mode = mode {
@@ -113,31 +120,23 @@ enum SafeArea {
         CGCompleteDisplayConfiguration(config, .forAppOnly)
     }
 
-    /// Stops any mirroring involving the virtual display. Mirroring it never makes sense: the DeskPad window,
-    /// shown on the mirrored physical screen, would show itself recursively. macOS may also restore mirroring
-    /// it remembered for the display, so the change is made permanent.
-    static func stopMirroring(_ virtualDisplayID: CGDirectDisplayID) {
-        guard CGDisplayIsInMirrorSet(virtualDisplayID) != 0 else {
-            return
+    /// Safe area mode covers the physical screen with the captured virtual display, so without screen recording
+    /// access the screen would turn completely black. Requests the access and explains it if it's missing.
+    static func ensureScreenRecordingAccess() -> Bool {
+        if CGPreflightScreenCaptureAccess() {
+            return true
         }
-        NSLog("DeskPad: virtual display %u is mirrored, turning mirroring off", virtualDisplayID)
-        var displayCount: UInt32 = 0
-        CGGetOnlineDisplayList(0, nil, &displayCount)
-        var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-        CGGetOnlineDisplayList(displayCount, &displayIDs, &displayCount)
-        let mirroredDisplayID = CGDisplayMirrorsDisplay(virtualDisplayID)
-        let involvedDisplayIDs = displayIDs.prefix(Int(displayCount)).filter {
-            $0 == virtualDisplayID || $0 == mirroredDisplayID || CGDisplayMirrorsDisplay($0) == virtualDisplayID
+        CGRequestScreenCaptureAccess()
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "Screen recording access needed"
+            alert.informativeText = "Safe area mode shows the virtual display in place of your screen, which requires "
+                + "DeskPad to be allowed in System Settings › Privacy & Security › Screen & System Audio Recording. "
+                + "Allow it there, quit and reopen DeskPad, then turn safe area mode on again."
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
         }
-
-        var config: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&config) == .success else {
-            return
-        }
-        for displayID in involvedDisplayIDs {
-            CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
-        }
-        CGCompleteDisplayConfiguration(config, .permanently)
+        return false
     }
 
     /// Undoes `makeMainDisplay`.

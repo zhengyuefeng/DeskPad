@@ -21,6 +21,7 @@ enum UserDefaultsKey {
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     var window: NSWindow!
     private var hotKeyRef: EventHotKeyRef?
+    private var safeAreaOffHotKeyRef: EventHotKeyRef?
     private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -88,21 +89,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: - Hot key
 
-    /// Registers ⌃⌥⌘D as a global shortcut that moves the cursor onto the virtual display and back.
+    /// Registers the global shortcuts: ⌃⌥⌘D moves the cursor onto the virtual display and back, and ⌃⌥⌘S turns
+    /// safe area mode off (e.g. if the screen stays black).
     private func registerToggleCursorHotKey() {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-            store.dispatch(MouseLocationAction.toggleCursorLocation)
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+            var hotKeyID = EventHotKeyID()
+            GetEventParameter(
+                event,
+                EventParamName(kEventParamDirectObject),
+                EventParamType(typeEventHotKeyID),
+                nil,
+                MemoryLayout<EventHotKeyID>.size,
+                nil,
+                &hotKeyID
+            )
+            switch hotKeyID.id {
+            case 1:
+                store.dispatch(MouseLocationAction.toggleCursorLocation)
+            case 2:
+                SafeArea.isEnabled = false
+                NotificationCenter.default.post(name: SafeArea.settingsDidChangeNotification, object: nil)
+            default:
+                break
+            }
             return OSStatus(noErr)
         }, 1, &eventType, nil, nil)
-        let hotKeyID = EventHotKeyID(signature: OSType(0x4450_4144), id: 1) // "DPAD"
+        let signature = OSType(0x4450_4144) // "DPAD"
         RegisterEventHotKey(
             UInt32(kVK_ANSI_D),
             UInt32(cmdKey | optionKey | controlKey),
-            hotKeyID,
+            EventHotKeyID(signature: signature, id: 1),
             GetApplicationEventTarget(),
             0,
             &hotKeyRef
+        )
+        RegisterEventHotKey(
+            UInt32(kVK_ANSI_S),
+            UInt32(cmdKey | optionKey | controlKey),
+            EventHotKeyID(signature: signature, id: 2),
+            GetApplicationEventTarget(),
+            0,
+            &safeAreaOffHotKeyRef
         )
     }
 
@@ -342,6 +370,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Shows the safe area selection and turns safe area mode on with the selected area.
     /// If the selection is cancelled, safe area mode is turned back on only if `wasEnabled`.
     private func presentSafeAreaSelection(restoringEnabled wasEnabled: Bool, remainingAttempts: Int = 10) {
+        guard SafeArea.ensureScreenRecordingAccess() else {
+            SafeArea.isEnabled = false
+            return
+        }
         let finish = { (insets: NSEdgeInsets?) in
             if let insets = insets {
                 SafeArea.insets = insets
@@ -415,7 +447,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if let screen = NSScreen.screens.first(where: { CGDisplayIsBuiltin($0.displayID) != 0 }) ?? NSScreen.main {
             informativeText += "\n\nScreen size: \(Int(screen.frame.width)) × \(Int(screen.frame.height)) points."
         }
-        informativeText += "\n\nHold Option while launching DeskPad to turn safe area mode off."
+        informativeText += "\n\nPress ⌃⌥⌘S at any time, or hold Option while launching DeskPad, to turn safe area mode off."
         alert.informativeText = informativeText
         alert.accessoryView = gridView
         alert.addButton(withTitle: "Enable")
