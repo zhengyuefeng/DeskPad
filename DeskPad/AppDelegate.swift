@@ -1,3 +1,4 @@
+import Carbon
 import Cocoa
 import ReSwift
 
@@ -13,6 +14,7 @@ enum UserDefaultsKey {
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     var window: NSWindow!
+    private var hotKeyRef: EventHotKeyRef?
 
     func applicationDidFinishLaunching(_: Notification) {
         UserDefaults.standard.register(defaults: [
@@ -30,18 +32,49 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         window.titleVisibility = .hidden
         window.backgroundColor = .white
         window.contentMinSize = CGSize(width: 400, height: 300)
-        window.contentMaxSize = CGSize(width: 5120, height: 2160)
+        window.contentMaxSize = maxDisplaySize
         window.styleMask.insert(.resizable)
         window.collectionBehavior.insert(.fullScreenPrimary)
         applyKeepOnTop()
 
         NSApplication.shared.mainMenu = makeMainMenu()
+        registerToggleCursorHotKey()
 
         store.dispatch(AppDelegateAction.didFinishLaunching)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
         return true
+    }
+
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+        // Clicking the Dock icon always brings the window back, even if it got lost
+        // (e.g. on the virtual display itself, or miniaturized).
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    // MARK: - Hot key
+
+    /// Registers ⌃⌥⌘D as a global shortcut that moves the cursor onto the virtual display and back.
+    private func registerToggleCursorHotKey() {
+        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+            store.dispatch(MouseLocationAction.toggleCursorLocation)
+            return OSStatus(noErr)
+        }, 1, &eventType, nil, nil)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x4450_4144), id: 1) // "DPAD"
+        RegisterEventHotKey(
+            UInt32(kVK_ANSI_D),
+            UInt32(cmdKey | optionKey | controlKey),
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
     }
 
     // MARK: - Menu
@@ -96,6 +129,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         fullScreenMenuItem.keyEquivalentModifierMask = [.command, .control]
         windowMenu.addItem(fullScreenMenuItem)
         windowMenu.addItem(.separator())
+        // ⌃⌥⌘D is registered as a global hot key, so it's not set as key equivalent here.
+        let toggleCursorMenuItem = NSMenuItem(
+            title: "Move Cursor to/from DeskPad Display (⌃⌥⌘D)",
+            action: #selector(toggleCursorLocation(_:)),
+            keyEquivalent: ""
+        )
+        toggleCursorMenuItem.target = self
+        windowMenu.addItem(toggleCursorMenuItem)
         let keepOnTopMenuItem = NSMenuItem(
             title: "Keep on Top",
             action: #selector(toggleKeepOnTop(_:)),
@@ -117,6 +158,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         NSApplication.shared.windowsMenu = windowMenu
 
         return mainMenu
+    }
+
+    @objc private func toggleCursorLocation(_: NSMenuItem) {
+        store.dispatch(MouseLocationAction.toggleCursorLocation)
     }
 
     @objc private func toggleKeepOnTop(_: NSMenuItem) {

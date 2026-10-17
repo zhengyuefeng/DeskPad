@@ -5,6 +5,8 @@ enum ScreenViewAction: Action {
     case setDisplayID(CGDirectDisplayID)
 }
 
+let maxDisplaySize = CGSize(width: 7680, height: 4800)
+
 class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDelegate {
     override func loadView() {
         view = NSView()
@@ -26,8 +28,10 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
         let descriptor = CGVirtualDisplayDescriptor()
         descriptor.setDispatchQueue(DispatchQueue.main)
         descriptor.name = "DeskPad Display"
-        descriptor.maxPixelsWide = 5120
-        descriptor.maxPixelsHigh = 2160
+        // HiDPI modes need twice the pixels of the mode itself, so leave enough room
+        // for e.g. 1920x1200 and 2560x1600 to be offered in HiDPI.
+        descriptor.maxPixelsWide = UInt32(maxDisplaySize.width)
+        descriptor.maxPixelsHigh = UInt32(maxDisplaySize.height)
         descriptor.sizeInMillimeters = CGSize(width: 1600, height: 1000)
         descriptor.productID = 0x1234
         descriptor.vendorID = 0x3456
@@ -47,6 +51,9 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
             CGVirtualDisplayMode(width: 3840, height: 1600, refreshRate: 60),
             CGVirtualDisplayMode(width: 3440, height: 1440, refreshRate: 60),
             // 16:9
+            CGVirtualDisplayMode(width: 6016, height: 3384, refreshRate: 60),
+            CGVirtualDisplayMode(width: 5120, height: 2880, refreshRate: 60),
+            CGVirtualDisplayMode(width: 4096, height: 2304, refreshRate: 60),
             CGVirtualDisplayMode(width: 3840, height: 2160, refreshRate: 60),
             CGVirtualDisplayMode(width: 2560, height: 1440, refreshRate: 60),
             CGVirtualDisplayMode(width: 1920, height: 1080, refreshRate: 60),
@@ -54,6 +61,9 @@ class ScreenViewController: SubscriberViewController<ScreenViewData>, NSWindowDe
             CGVirtualDisplayMode(width: 1366, height: 768, refreshRate: 60),
             CGVirtualDisplayMode(width: 1280, height: 720, refreshRate: 60),
             // 16:10
+            CGVirtualDisplayMode(width: 5120, height: 3200, refreshRate: 60),
+            CGVirtualDisplayMode(width: 3840, height: 2400, refreshRate: 60),
+            CGVirtualDisplayMode(width: 2880, height: 1800, refreshRate: 60),
             CGVirtualDisplayMode(width: 2560, height: 1600, refreshRate: 60),
             CGVirtualDisplayMode(width: 1920, height: 1200, refreshRate: 60),
             CGVirtualDisplayMode(width: 1680, height: 1050, refreshRate: 60),

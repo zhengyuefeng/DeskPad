@@ -26,6 +26,15 @@ DeskPad behaves like any other display. Launching the app is equivalent to plugg
 You can change the display resolution through the system preferences and the application window will adjust accordingly.
 
 Whenever you move your mouse cursor to the virtual display, DeskPad will highlight its title bar in blue and move the application window to the front to let you know where you are.
+This can be turned off via **Window** → **Bring to Front When Cursor Enters Display**.
+
+The **Window** menu also offers:
+
+- **Keep on Top** (⌥⌘T) to keep the DeskPad window above all other windows
+- **Enter Full Screen** (⌃⌘F)
+- **Move Cursor to/from DeskPad Display**, also available system-wide via ⌃⌥⌘D
+
+The window size and position are remembered per resolution. If the DeskPad window ever ends up on the virtual display itself, it moves back to a physical screen; clicking the Dock icon also brings it back to the front.
 
 <h3 align="center">
   <a href="https://github.com/Stengo/DeskPad/blob/main/demonstration.gif">
